@@ -15,9 +15,10 @@ WATCHLIST = [
     "BNB-USD", "XRP-USD", "DOGE-USD"
 ]
 
-# PARÂMETROS CAMPEÕES (Validado via Grid Search: +163% de Lucro)
+# PARÂMETROS CAMPEÕES (V15 - Otimizado para o Ciclo Atual)
+# Média 40/60: Protegeu na queda e lucrou na retomada (+133% em 2 anos)
 MA_FAST = 40
-MA_SLOW = 70
+MA_SLOW = 60
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -26,14 +27,96 @@ def enviar_telegram(mensagem):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"Erro Telegram: {e}")
 
 def analisar_ativo(symbol):
     try:
-        # Baixa dados suficientes para calcular a média de 70 períodos
+        # Baixa dados (H1) suficientes para médias e cálculo prévio
+        # "multi_level_index=False" corrige o bug recente do yfinance
         df = yf.download(symbol, period="1mo", interval="1h", progress=False, multi_level_index=False)
         df = df.dropna()
+        
+        # Garante dados suficientes para calcular a média de 60
         if len(df) < 100: return None
+
+        # Dados Básicos
+        close = df['Close']
+        high = df['High']
+        low = df['Low']
+
+        # --- CÁLCULO DA ESTRATÉGIA (SMA 40/60) ---
+        sma_fast = close.rolling(window=MA_FAST).mean()
+        sma_slow = close.rolling(window=MA_SLOW).mean()
+
+        # ATR para Stop Dinâmico (Gestão de Risco)
+        tr1 = high - low
+        tr2 = (high - close.shift()).abs()
+        tr3 = (low - close.shift()).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(14).mean()
+
+        # Valores atuais (Última vela fechada)
+        curr_price = float(close.iloc[-1])
+        curr_fast = float(sma_fast.iloc[-1])
+        curr_slow = float(sma_slow.iloc[-1])
+        curr_atr = float(atr.iloc[-1])
+        
+        # Valores anteriores (Para confirmar o cruzamento)
+        prev_fast = float(sma_fast.iloc[-2])
+        prev_slow = float(sma_slow.iloc[-2])
+
+        sinal, icone, direcao = None, "", ""
+
+        # --- LÓGICA DE GATILHO ---
+        
+        # Cruzou para CIMA (Compra)
+        if curr_fast > curr_slow and prev_fast <= prev_slow:
+            sinal = f"COMPRA (Golden {MA_FAST}/{MA_SLOW})"
+            icone = "🟢"
+            direcao = "LONG"
+            
+        # Cruzou para BAIXO (Venda)
+        elif curr_fast < curr_slow and prev_fast >= prev_slow:
+            sinal = f"VENDA (Death {MA_FAST}/{MA_SLOW})"
+            icone = "🔴"
+            direcao = "SHORT"
+
+        if sinal:
+            # Stop Loss Técnico (3x ATR)
+            # Dá espaço para volatilidade sem sair cedo demais
+            stop_dist = 3.0 * curr_atr
+            stop_loss = curr_price - stop_dist if direcao == "LONG" else curr_price + stop_dist
+
+            return (
+                f"{icone} *{sinal}* | {symbol.replace('-USD','')}\n"
+                f"💵 Preço: {curr_price:.2f}\n"
+                f"📈 Média Rápida ({MA_FAST}): {curr_fast:.2f}\n"
+                f"📉 Média Lenta ({MA_SLOW}): {curr_slow:.2f}\n"
+                f"🛡️ Stop Sugerido: {stop_loss:.2f}\n"
+                f"🚀 Alvo: Aberto (Surfar a Tendência)"
+            )
+            
+        return None
+
+    except Exception as e: 
+        print(f"Erro ao analisar {symbol}: {e}")
+        return None
+
+if __name__ == "__main__":
+    print(f"🦅 J.A.R.V.I.S. V15 Iniciado | Setup: MA {MA_FAST}/{MA_SLOW} | H1")
+    mensagens = []
+    
+    for symbol in WATCHLIST:
+        res = analisar_ativo(symbol)
+        if res: mensagens.append(res)
+
+    if mensagens:
+        full_msg = "🚨 *SINAL DE TRADE (H1)*\n\n" + "\n-------------------\n".join(mensagens)
+        enviar_telegram(full_msg)
+        print(f"Sinais enviados: {len(mensagens)}")
+    else:
+        print("Nenhum cruzamento detectado nesta hora.")
 
         # Dados Básicos
         close = df['Close']
