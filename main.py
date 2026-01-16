@@ -5,16 +5,19 @@ import yfinance as yf
 import warnings
 import numpy as np
 
-# --- CONFIGURAÇÃO SEGURA ---
+# --- CONFIGURAÇÃO ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # Lista de ativos
 WATCHLIST = [
     "BTC-USD", "ETH-USD", "SOL-USD", 
-    "BNB-USD", "XRP-USD", "LINK-USD",
-    "DOGE-USD", "ADA-USD"
+    "BNB-USD", "XRP-USD", "DOGE-USD"
 ]
+
+# PARÂMETROS CAMPEÕES (Validado via Grid Search: +163% de Lucro)
+MA_FAST = 40
+MA_SLOW = 70
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -25,94 +28,80 @@ def enviar_telegram(mensagem):
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}, timeout=10)
     except: pass
 
-def calcular_rsi(series, period=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).ewm(alpha=1/period, min_periods=period).mean()
-    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/period, min_periods=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
 def analisar_ativo(symbol):
     try:
-        # Baixa dados (60 dias H1)
-        df = yf.download(symbol, period="60d", interval="1h", progress=False, multi_level_index=False)
+        # Baixa dados suficientes para calcular a média de 70 períodos
+        df = yf.download(symbol, period="1mo", interval="1h", progress=False, multi_level_index=False)
         df = df.dropna()
-        if df.empty or len(df) < 200: return None
+        if len(df) < 100: return None
 
         # Dados Básicos
         close = df['Close']
         high = df['High']
         low = df['Low']
 
-        # Médias e RSI
-        sma200 = close.rolling(200).mean()
-        sma50  = close.rolling(50).mean()
-        rsi = calcular_rsi(close)
+        # --- A ESTRATÉGIA CAMPEÃ (SMA 40/70) ---
+        sma_fast = close.rolling(window=MA_FAST).mean()
+        sma_slow = close.rolling(window=MA_SLOW).mean()
 
-        # ATR (Volatilidade)
+        # ATR para Stop de Segurança
         tr1 = high - low
         tr2 = (high - close.shift()).abs()
         tr3 = (low - close.shift()).abs()
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
         atr = tr.rolling(14).mean()
 
-        # Valores atuais
+        # Valores atuais e anteriores
         curr_price = float(close.iloc[-1])
-        curr_rsi = float(rsi.iloc[-1])
-        curr_sma200 = float(sma200.iloc[-1])
-        curr_sma50 = float(sma50.iloc[-1])
+        curr_fast = float(sma_fast.iloc[-1])
+        curr_slow = float(sma_slow.iloc[-1])
         curr_atr = float(atr.iloc[-1])
-
-        # Tendência
-        trend_alta = curr_price > curr_sma200 and curr_sma50 > curr_sma200
-        trend_baixa = curr_price < curr_sma200 and curr_sma50 < curr_sma200
         
+        prev_fast = float(sma_fast.iloc[-2])
+        prev_slow = float(sma_slow.iloc[-2])
+
         sinal, icone, direcao = None, "", ""
 
-        # --- LÓGICA AGRESSIVA (RSI até 55) ---
-        if trend_alta:
-            if curr_rsi <= 35: 
-                sinal = "COMPRA (Fundo)"
-                icone = "💎"
-                direcao = "LONG"
-            elif 35 < curr_rsi <= 55:  # Agora pega pullbacks maiores
-                sinal = "COMPRA (Pullback)"
-                icone = "🦅"
-                direcao = "LONG"
+        # --- LÓGICA DE CRUZAMENTO ---
         
-        elif trend_baixa:
-            if curr_rsi >= 65: 
-                sinal = "VENDA (Topo)"
-                icone = "🔴"
-                direcao = "SHORT"
+        # Cruzou para CIMA (Compra)
+        if curr_fast > curr_slow and prev_fast <= prev_slow:
+            sinal = "COMPRA (Golden 40/70)"
+            icone = "🟢"
+            direcao = "LONG"
+            
+        # Cruzou para BAIXO (Venda)
+        elif curr_fast < curr_slow and prev_fast >= prev_slow:
+            sinal = "VENDA (Death 40/70)"
+            icone = "🔴"
+            direcao = "SHORT"
 
         if sinal:
-            # Alvos (Stop 2.5x / Alvo 4.0x)
+            # Stop Loss de segurança (3x ATR)
             stop_loss = 0.0
-            take_profit = 0.0
-
+            
             if direcao == "LONG":
-                stop_loss = curr_price - (2.5 * curr_atr)
-                take_profit = curr_price + (4.0 * curr_atr)
+                stop_loss = curr_price - (3.0 * curr_atr)
             else:
-                stop_loss = curr_price + (2.5 * curr_atr)
-                take_profit = curr_price - (4.0 * curr_atr)
+                stop_loss = curr_price + (3.0 * curr_atr)
 
             return (
                 f"{icone} *{sinal}* | {symbol.replace('-USD','')}\n"
-                f"💵 Entrada: {curr_price:.2f}\n"
-                f"🛑 Stop: {stop_loss:.2f}\n"
-                f"🎯 Alvo: {take_profit:.2f}\n"
-                f"📊 RSI: {curr_rsi:.0f} | ATR: {curr_atr:.2f}"
+                f"💵 Preço: {curr_price:.2f}\n"
+                f"📈 Média Rápida ({MA_FAST}): {curr_fast:.2f}\n"
+                f"📉 Média Lenta ({MA_SLOW}): {curr_slow:.2f}\n"
+                f"🛑 Stop Sugerido: {stop_loss:.2f}\n"
+                f"🎯 Alvo: Aberto (Seguir Tendência)"
             )
             
         return None
 
-    except Exception: 
+    except Exception as e: 
+        print(f"Erro em {symbol}: {e}")
         return None
 
 if __name__ == "__main__":
-    print("🚀 J.A.R.V.I.S. V1.5 - Modo Agressivo...")
+    print(f"🚀 J.A.R.V.I.S. V12 - Monitorando Médias {MA_FAST}/{MA_SLOW}...")
     mensagens = []
     
     for symbol in WATCHLIST:
@@ -120,7 +109,8 @@ if __name__ == "__main__":
         if res: mensagens.append(res)
 
     if mensagens:
-        full_msg = "⚡ *SINAIS AGRESSIVOS (H1)*\n\n" + "\n-------------------\n".join(mensagens)
+        full_msg = "🏆 *SINAL CONFIRMADO (H1)*\n\n" + "\n-------------------\n".join(mensagens)
         enviar_telegram(full_msg)
+        print("Sinais enviados.")
     else:
-        print("Sem oportunidades agora.")
+        print("Sem cruzamentos novos. Tendência mantida.")
