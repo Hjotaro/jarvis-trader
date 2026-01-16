@@ -49,39 +49,37 @@ def analisar_ativo(symbol):
         sma50  = close.rolling(50).mean()
         rsi = calcular_rsi(close)
 
-        # --- CÁLCULO DO ATR (Volatilidade) ---
-        # ATR é essencial para calcular Stop/Alvo dinâmicos
+        # ATR (Volatilidade)
         tr1 = high - low
         tr2 = (high - close.shift()).abs()
         tr3 = (low - close.shift()).abs()
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
         atr = tr.rolling(14).mean()
 
-        # Pegando valores atuais
+        # Valores atuais
         curr_price = float(close.iloc[-1])
         curr_rsi = float(rsi.iloc[-1])
         curr_sma200 = float(sma200.iloc[-1])
         curr_sma50 = float(sma50.iloc[-1])
         curr_atr = float(atr.iloc[-1])
 
-        # Lógica de Tendência
+        # Tendência
         trend_alta = curr_price > curr_sma200 and curr_sma50 > curr_sma200
         trend_baixa = curr_price < curr_sma200 and curr_sma50 < curr_sma200
         
         sinal, icone, direcao = None, "", ""
 
-        # SETUP COMPRA
+        # --- LÓGICA AGRESSIVA (RSI até 55) ---
         if trend_alta:
             if curr_rsi <= 35: 
-                sinal = "COMPRA (Sobrevendido)"
+                sinal = "COMPRA (Fundo)"
                 icone = "💎"
                 direcao = "LONG"
-            elif 35 < curr_rsi <= 45: 
+            elif 35 < curr_rsi <= 55:  # Agora pega pullbacks maiores
                 sinal = "COMPRA (Pullback)"
                 icone = "🦅"
                 direcao = "LONG"
         
-        # SETUP VENDA
         elif trend_baixa:
             if curr_rsi >= 65: 
                 sinal = "VENDA (Topo)"
@@ -89,7 +87,7 @@ def analisar_ativo(symbol):
                 direcao = "SHORT"
 
         if sinal:
-            # --- CÁLCULO DE ALVOS (Math) ---
+            # Alvos (Stop 2.5x / Alvo 4.0x)
             stop_loss = 0.0
             take_profit = 0.0
 
@@ -110,10 +108,11 @@ def analisar_ativo(symbol):
             
         return None
 
-    except Exception: return None
+    except Exception: 
+        return None
 
 if __name__ == "__main__":
-    print("🚀 J.A.R.V.I.S. V147 - Analisando...")
+    print("🚀 J.A.R.V.I.S. V1.5 - Modo Agressivo...")
     mensagens = []
     
     for symbol in WATCHLIST:
@@ -121,44 +120,7 @@ if __name__ == "__main__":
         if res: mensagens.append(res)
 
     if mensagens:
-        full_msg = "⚡ *NOVOS SINAIS (H1)*\n\n" + "\n-------------------\n".join(mensagens)
+        full_msg = "⚡ *SINAIS AGRESSIVOS (H1)*\n\n" + "\n-------------------\n".join(mensagens)
         enviar_telegram(full_msg)
-        print("Sinais enviados.")
     else:
         print("Sem oportunidades agora.")
-        sma50 = close.rolling(50).mean()
-        rsi = calcular_rsi(close)
-        
-        curr_price = float(close.iloc[-1])
-        curr_rsi = float(rsi.iloc[-1])
-        curr_sma200 = float(sma200.iloc[-1])
-        curr_sma50 = float(sma50.iloc[-1])
-
-        trend_alta = curr_price > curr_sma200 and curr_sma50 > curr_sma200
-        trend_baixa = curr_price < curr_sma200 and curr_sma50 < curr_sma200
-        
-        sinal = None
-        if trend_alta:
-            if curr_rsi <= 35: sinal = f"💎 COMPRA (RSI {curr_rsi:.0f})"
-            elif 35 < curr_rsi <= 45: sinal = f"🦅 COMPRA (RSI {curr_rsi:.0f})"
-        elif trend_baixa:
-            if curr_rsi >= 65: sinal = f"🔴 VENDA (RSI {curr_rsi:.0f})"
-
-        if sinal:
-            return f"{sinal} *{symbol.replace('-USD','')}*\n💵 Px: {curr_price:.2f}"
-        return None
-    except: return None
-
-if __name__ == "__main__":
-    print("🚀 Verificando mercado...")
-    msgs = []
-    for symbol in WATCHLIST:
-        res = analisar_ativo(symbol)
-        if res: msgs.append(res)
-    
-    if msgs:
-        full_msg = "⚡ *ALERTA H1 (GitHub)*\n\n" + "\n-------------------\n".join(msgs)
-        enviar_telegram(full_msg)
-        print("Sinais enviados.")
-    else:
-        print("Sem sinais agora.")
