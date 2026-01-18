@@ -9,14 +9,7 @@ import numpy as np
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# LISTA DE ATIVOS (Tropa de Elite - Validados no Backtest)
-# BTC (+6%), ETH (+46%), XRP (+40%), DOGE (+6% na queda)
-WATCHLIST = [
-    "BTC-USD", 
-    "ETH-USD", 
-    "XRP-USD", 
-    "DOGE-USD"
-]
+ATIVOS = ["BTC-USD", "ETH-USD", "XRP-USD", "DOGE-USD", "PAXG-USD"]
 
 # PARÂMETROS CAMPEÕES (V15 - Otimizado 40/60)
 MA_FAST = 40
