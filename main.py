@@ -1,107 +1,112 @@
 import os
 import requests
-import pandas as pd
 import yfinance as yf
-import warnings
-import numpy as np
+import pandas as pd
 
-# --- CONFIGURAÇÃO ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# --- 1. CONFIGURAÇÕES GERAIS ---
+# A lista oficial de ativos (Cripto + Ouro Digital)
+WATCHLIST = ["BTC-USD", "ETH-USD", "XRP-USD", "DOGE-USD", "PAXG-USD"]
 
-ATIVOS = ["BTC-USD", "ETH-USD", "XRP-USD", "DOGE-USD", "PAXG-USD"]
+# Configuração da Estratégia Campeã (H1 + Médias 40/60)
+TIME_FRAME = "1h"  # Gráfico de 1 Hora
+MA_FAST = 40       # Média Rápida
+MA_SLOW = 60       # Média Lenta
 
-# PARÂMETROS CAMPEÕES (V15 - Otimizado 40/60)
-MA_FAST = 40
-MA_SLOW = 60
+# Credenciais do Telegram (Puxadas dos Secrets do GitHub)
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
+# --- 2. FUNÇÃO DE ENVIO PARA O TELEGRAM ---
 def enviar_telegram(mensagem):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}, timeout=10)
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
+        requests.post(url, data=data)
     except Exception as e:
-        print(f"Erro Telegram: {e}")
+        print(f"Erro ao enviar Telegram: {e}")
 
-def analisar_ativo(symbol):
-    try:
-        # Baixa dados (H1)
-        df = yf.download(symbol, period="1mo", interval="1h", progress=False, multi_level_index=False)
-        df = df.dropna()
-        if len(df) < 100: return None
+# --- 3. CÉREBRO DO ROBÔ (ANÁLISE TÉCNICA) ---
+def analisar_mercado():
+    print(f"🦅 J.A.R.V.I.S. Iniciando varredura no H1 ({MA_FAST}/{MA_SLOW})...")
+    sinais_encontrados = 0
 
-        # Dados
-        close = df['Close']
-        high = df['High']
-        low = df['Low']
-
-        # --- CÁLCULO DA ESTRATÉGIA ---
-        sma_fast = close.rolling(window=MA_FAST).mean()
-        sma_slow = close.rolling(window=MA_SLOW).mean()
-
-        # ATR (Volatilidade para Stop)
-        tr1 = high - low
-        tr2 = (high - close.shift()).abs()
-        tr3 = (low - close.shift()).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(14).mean()
-
-        # Valores atuais
-        curr_price = float(close.iloc[-1])
-        curr_fast = float(sma_fast.iloc[-1])
-        curr_slow = float(sma_slow.iloc[-1])
-        curr_atr = float(atr.iloc[-1])
-        
-        # Valores anteriores
-        prev_fast = float(sma_fast.iloc[-2])
-        prev_slow = float(sma_slow.iloc[-2])
-
-        sinal, icone, direcao = None, "", ""
-
-        # --- GATILHOS ---
-        # Cruzou para CIMA
-        if curr_fast > curr_slow and prev_fast <= prev_slow:
-            sinal = f"COMPRA (Golden {MA_FAST}/{MA_SLOW})"
-            icone = "🟢"
-            direcao = "LONG"
+    for ativo in WATCHLIST:
+        try:
+            # Baixa os dados dos últimos 7 dias (suficiente para calcular média de 60h)
+            df = yf.download(ativo, period="7d", interval=TIME_FRAME, progress=False)
             
-        # Cruzou para BAIXO
-        elif curr_fast < curr_slow and prev_fast >= prev_slow:
-            sinal = f"VENDA (Death {MA_FAST}/{MA_SLOW})"
-            icone = "🔴"
-            direcao = "SHORT"
+            # Ajuste para garantir que temos dados suficientes
+            if len(df) < MA_SLOW:
+                print(f"⚠️ Dados insuficientes para {ativo}")
+                continue
 
-        if sinal:
-            # Stop Loss (3x ATR)
-            stop_dist = 3.0 * curr_atr
-            stop_loss = curr_price - stop_dist if direcao == "LONG" else curr_price + stop_dist
+            # --- CÁLCULO DAS MÉDIAS MÓVEIS ---
+            # Usa 'Close' para o cálculo. O yfinance às vezes retorna MultiIndex, garantimos o flatten.
+            if isinstance(df.columns, pd.MultiIndex):
+                close_prices = df["Close"].iloc[:, 0]
+            else:
+                close_prices = df["Close"]
 
-            return (
-                f"{icone} *{sinal}* | {symbol.replace('-USD','')}\n"
-                f"💵 Preço: {curr_price:.2f}\n"
-                f"📈 Médias: {curr_fast:.2f} / {curr_slow:.2f}\n"
-                f"🛡️ Stop: {stop_loss:.2f}\n"
-                f"🚀 Alvo: Aberto (Tendência)"
-            )
+            df['Fast'] = close_prices.rolling(window=MA_FAST).mean()
+            df['Slow'] = close_prices.rolling(window=MA_SLOW).mean()
+
+            # --- LEITURA DO MOMENTO ATUAL ---
+            # Pegamos o último preço (atual) e o penúltimo (hora anterior)
+            atual_fast = df['Fast'].iloc[-1]
+            atual_slow = df['Slow'].iloc[-1]
+            atual_price = float(close_prices.iloc[-1])
             
-        return None
+            prev_fast = df['Fast'].iloc[-2]
+            prev_slow = df['Slow'].iloc[-2]
 
-    except Exception as e: 
-        print(f"Erro ao analisar {symbol}: {e}")
-        return None
+            # Nome bonitinho para o ativo (tira o -USD)
+            nome_ativo = ativo.replace("-USD", "")
+            if "PAXG" in nome_ativo: nome_ativo = "OURO (PAXG)"
 
-if __name__ == "__main__":
-    print(f"🦅 J.A.R.V.I.S. V15 (Elite) | Setup: {MA_FAST}/{MA_SLOW}")
-    mensagens = []
-    
-    for symbol in WATCHLIST:
-        res = analisar_ativo(symbol)
-        if res: mensagens.append(res)
+            # --- LÓGICA DE SINAIS (CRUZAMENTOS) ---
+            
+            # 🟢 SINAL DE COMPRA (Golden Cross)
+            # A rápida cruzou para CIMA da lenta
+            if prev_fast <= prev_slow and atual_fast > atual_slow:
+                msg = (
+                    f"🚀 *SINAL DE COMPRA CONFIRMADO*\n\n"
+                    f"💎 *Ativo:* {nome_ativo}\n"
+                    f"💵 *Preço:* ${atual_price:.2f}\n"
+                    f"📈 *Médias:* {atual_fast:.2f} (Rápida) cruzou acima de {atual_slow:.2f}\n\n"
+                    f"⚡ *Ação:* Comprar Spot (20% da Banca)"
+                )
+                enviar_telegram(msg)
+                print(f"🟢 SINAL ENVIADO: {ativo}")
+                sinais_encontrados += 1
 
-    if mensagens:
-        full_msg = "🚨 *SINAL CONFIRMADO (H1)*\n\n" + "\n-------------------\n".join(mensagens)
-        enviar_telegram(full_msg)
+            # 🔴 SINAL DE VENDA/PROTEÇÃO (Death Cross)
+            # A rápida cruzou para BAIXO da lenta
+            elif prev_fast >= prev_slow and atual_fast < atual_slow:
+                msg = (
+                    f"🚨 *SINAL DE VENDA (PROTEÇÃO)*\n\n"
+                    f"🔻 *Ativo:* {nome_ativo}\n"
+                    f"💵 *Preço:* ${atual_price:.2f}\n"
+                    f"📉 *Médias:* {atual_fast:.2f} (Rápida) cruzou abaixo de {atual_slow:.2f}\n\n"
+                    f"🛡️ *Ação:* Vender tudo e ficar em Dólar (USDT)"
+                )
+                enviar_telegram(msg)
+                print(f"🔴 SINAL ENVIADO: {ativo}")
+                sinais_encontrados += 1
+            
+            else:
+                # Apenas log no GitHub para sabermos que ele analisou
+                tendencia = "ALTA" if atual_fast > atual_slow else "BAIXA"
+                print(f"🔎 {ativo}: Sem mudanças. Tendência de {tendencia}.")
+
+        except Exception as e:
+            print(f"❌ Erro ao analisar {ativo}: {e}")
+
+    # Mensagem final no log
+    if sinais_encontrados == 0:
+        print("✅ Varredura concluída. Nenhum cruzamento novo nesta hora.")
     else:
-        print("Monitorando... Sem sinais agora.")
+        print(f"✅ Varredura concluída. {sinais_encontrados} sinais enviados.")
+
+# --- 4. EXECUÇÃO ---
+if __name__ == "__main__":
+    analisar_mercado()
