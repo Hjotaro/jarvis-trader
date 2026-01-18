@@ -1,4 +1,4 @@
-pandas
-yfinance
 requests
-numpy
+yfinance
+pandas
+ccxt
