@@ -105,9 +105,10 @@ def analisar_mercado():
         binance_symbol = ASSET_MAP[yf_symbol] # Converte nome para Binance
         
         try:
-            # Baixa dados do Yahoo (Para não gastar API da Binance com histórico)
+            # Baixa dados do Yahoo
             df = yf.download(yf_symbol, period="7d", interval=TIME_FRAME, progress=False)
             
+            # Se não tiver dados suficientes, pula
             if len(df) < MA_SLOW: continue
 
             # Tratamento de dados
@@ -147,78 +148,3 @@ def analisar_mercado():
 if __name__ == "__main__":
     analisar_mercado()
             
-            # Ajuste para garantir que temos dados suficientes
-            if len(df) < MA_SLOW:
-                print(f"⚠️ Dados insuficientes para {ativo}")
-                continue
-
-            # --- CÁLCULO DAS MÉDIAS MÓVEIS ---
-            # Usa 'Close' para o cálculo. O yfinance às vezes retorna MultiIndex, garantimos o flatten.
-            if isinstance(df.columns, pd.MultiIndex):
-                close_prices = df["Close"].iloc[:, 0]
-            else:
-                close_prices = df["Close"]
-
-            df['Fast'] = close_prices.rolling(window=MA_FAST).mean()
-            df['Slow'] = close_prices.rolling(window=MA_SLOW).mean()
-
-            # --- LEITURA DO MOMENTO ATUAL ---
-            # Pegamos o último preço (atual) e o penúltimo (hora anterior)
-            atual_fast = df['Fast'].iloc[-1]
-            atual_slow = df['Slow'].iloc[-1]
-            atual_price = float(close_prices.iloc[-1])
-            
-            prev_fast = df['Fast'].iloc[-2]
-            prev_slow = df['Slow'].iloc[-2]
-
-            # Nome bonitinho para o ativo (tira o -USD)
-            nome_ativo = ativo.replace("-USD", "")
-            if "PAXG" in nome_ativo: nome_ativo = "OURO (PAXG)"
-
-            # --- LÓGICA DE SINAIS (CRUZAMENTOS) ---
-            
-            # 🟢 SINAL DE COMPRA (Golden Cross)
-            # A rápida cruzou para CIMA da lenta
-            if prev_fast <= prev_slow and atual_fast > atual_slow:
-                msg = (
-                    f"🚀 *SINAL DE COMPRA CONFIRMADO*\n\n"
-                    f"💎 *Ativo:* {nome_ativo}\n"
-                    f"💵 *Preço:* ${atual_price:.2f}\n"
-                    f"📈 *Médias:* {atual_fast:.2f} (Rápida) cruzou acima de {atual_slow:.2f}\n\n"
-                    f"⚡ *Ação:* Comprar Spot (20% da Banca)"
-                )
-                enviar_telegram(msg)
-                print(f"🟢 SINAL ENVIADO: {ativo}")
-                sinais_encontrados += 1
-
-            # 🔴 SINAL DE VENDA/PROTEÇÃO (Death Cross)
-            # A rápida cruzou para BAIXO da lenta
-            elif prev_fast >= prev_slow and atual_fast < atual_slow:
-                msg = (
-                    f"🚨 *SINAL DE VENDA (PROTEÇÃO)*\n\n"
-                    f"🔻 *Ativo:* {nome_ativo}\n"
-                    f"💵 *Preço:* ${atual_price:.2f}\n"
-                    f"📉 *Médias:* {atual_fast:.2f} (Rápida) cruzou abaixo de {atual_slow:.2f}\n\n"
-                    f"🛡️ *Ação:* Vender tudo e ficar em Dólar (USDT)"
-                )
-                enviar_telegram(msg)
-                print(f"🔴 SINAL ENVIADO: {ativo}")
-                sinais_encontrados += 1
-            
-            else:
-                # Apenas log no GitHub para sabermos que ele analisou
-                tendencia = "ALTA" if atual_fast > atual_slow else "BAIXA"
-                print(f"🔎 {ativo}: Sem mudanças. Tendência de {tendencia}.")
-
-        except Exception as e:
-            print(f"❌ Erro ao analisar {ativo}: {e}")
-
-    # Mensagem final no log
-    if sinais_encontrados == 0:
-        print("✅ Varredura concluída. Nenhum cruzamento novo nesta hora.")
-    else:
-        print(f"✅ Varredura concluída. {sinais_encontrados} sinais enviados.")
-
-# --- 4. EXECUÇÃO ---
-if __name__ == "__main__":
-    analisar_mercado()
