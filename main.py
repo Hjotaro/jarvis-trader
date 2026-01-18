@@ -2,38 +2,96 @@ import os
 import requests
 import yfinance as yf
 import pandas as pd
-import ccxt
-import time
 
-# --- 1. CONFIGURAÇÕES ---
-# Mapeamento: O nome no Yahoo Finance -> O nome na Binance
-ASSET_MAP = {
-    "BTC-USD": "BTC/USDT",
-    "ETH-USD": "ETH/USDT",
-    "XRP-USD": "XRP/USDT",
-    "DOGE-USD": "DOGE/USDT",
-    "PAXG-USD": "PAXG/USDT"
-}
+# --- CONFIGURAÇÕES ---
+# Lista de ativos para vigiar
+WATCHLIST = ["BTC-USD", "ETH-USD", "XRP-USD", "DOGE-USD", "PAXG-USD"]
 
-WATCHLIST = list(ASSET_MAP.keys())
+# Setup: Gráfico de 1 Hora (H1) com Médias 40 e 60
 TIME_FRAME = "1h"
 MA_FAST = 40
 MA_SLOW = 60
 
-# Configuração de Risco: Quanto da banca usar por trade?
-PCT_BANCA = 0.20  # 20% do saldo livre em USDT
+# --- CREDENCIAIS ---
+# Apenas Telegram (Não precisa de Binance aqui)
+try:
+    TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+    TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+except KeyError:
+    print("Erro: Tokens do Telegram não encontrados.")
+    exit()
 
-# Credenciais
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-API_KEY = os.environ["BINANCE_API_KEY"]
-SECRET_KEY = os.environ["BINANCE_SECRET_KEY"]
+def enviar_telegram(mensagem):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
+        requests.post(url, data=data)
+    except Exception as e:
+        print(f"Erro no Telegram: {e}")
 
-# Conexão com a Binance via CCXT
-exchange = ccxt.binance({
-    'apiKey': API_KEY,
-    'secret': SECRET_KEY,
-    'enableRateLimit': True,
+def analisar_mercado():
+    print(f"🦅 J.A.R.V.I.S. Sentinela | Monitorando {len(WATCHLIST)} ativos...")
+    
+    for ativo in WATCHLIST:
+        try:
+            # Baixa dados do Yahoo Finance (Sem bloqueio de IP)
+            df = yf.download(ativo, period="7d", interval=TIME_FRAME, progress=False)
+            
+            if len(df) < MA_SLOW: continue
+
+            # Tratamento de dados
+            if isinstance(df.columns, pd.MultiIndex):
+                close = df["Close"].iloc[:, 0]
+            else:
+                close = df["Close"]
+
+            # Calcula as Médias Móveis
+            df['Fast'] = close.rolling(window=MA_FAST).mean()
+            df['Slow'] = close.rolling(window=MA_SLOW).mean()
+
+            # Pega os últimos valores
+            atual_fast = df['Fast'].iloc[-1]
+            atual_slow = df['Slow'].iloc[-1]
+            prev_fast = df['Fast'].iloc[-2]
+            prev_slow = df['Slow'].iloc[-2]
+            preco_atual = float(close.iloc[-1])
+            
+            nome_limpo = ativo.replace("-USD", "")
+
+            # --- LÓGICA DE ALERTA ---
+            
+            # Cruzamento para CIMA (Compra)
+            if prev_fast <= prev_slow and atual_fast > atual_slow:
+                msg = (
+                    f"🚀 *SINAL DE COMPRA DETECTADO*\n\n"
+                    f"💎 *Ativo:* {nome_limpo}\n"
+                    f"💵 *Preço:* ${preco_atual:.2f}\n"
+                    f"📈 *Sinal:* Média {MA_FAST} cruzou ACIMA da {MA_SLOW}\n\n"
+                    f"⚡ *Ação:* Verifique o gráfico e COMPRE se confirmar!"
+                )
+                enviar_telegram(msg)
+                print(f"🚀 Alerta de COMPRA enviado para {ativo}")
+
+            # Cruzamento para BAIXO (Venda)
+            elif prev_fast >= prev_slow and atual_fast < atual_slow:
+                msg = (
+                    f"🚨 *SINAL DE VENDA DETECTADO*\n\n"
+                    f"🔻 *Ativo:* {nome_limpo}\n"
+                    f"💵 *Preço:* ${preco_atual:.2f}\n"
+                    f"📉 *Sinal:* Média {MA_FAST} cruzou ABAIXO da {MA_SLOW}\n\n"
+                    f"🛡️ *Ação:* Hora de realizar lucro ou proteger capital!"
+                )
+                enviar_telegram(msg)
+                print(f"🚨 Alerta de VENDA enviado para {ativo}")
+            
+            else:
+                print(f"💤 {ativo}: Neutro. (${preco_atual:.2f})")
+
+        except Exception as e:
+            print(f"Erro ao analisar {ativo}: {e}")
+
+if __name__ == "__main__":
+    analisar_mercado()
     'options': {'defaultType': 'spot'}
 })
 
